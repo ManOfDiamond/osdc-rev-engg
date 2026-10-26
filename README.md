@@ -97,8 +97,32 @@ deliverables:
   clean key, and can decrypt and CRC-check a supplied payload.
 * `q2/generate_payload.py` regenerates an encrypted payload for a supplied
   key and verifies its round trip.
-* `q2/verify.sh <path_to_patched_binary>` runs a candidate binary under
-  batch-mode GDB for three seconds and checks for `ROOT INTEGRITY VERIFIED`.
+* `q2/verify.sh` validates a candidate under batch-mode GDB. It has three
+  modes:
+  * **Static patch:** `q2/verify.sh <patched_binary>` runs the already-patched
+    binary with no breakpoints. Use this when the binary itself bypasses the
+    checks while traced.
+  * **Submitted GDB script:**
+    `q2/verify.sh <binary> --script <gdb_commands_file>` runs a supplied GDB
+    command file as-is. The script must contain the required breakpoints,
+    register changes, and `run`/`continue` commands.
+  * **Breakpoint/register/key convenience mode:**
+    `q2/verify.sh <binary> --break 0xADDR --reg <REG> --key 0xKEY` sets a
+    breakpoint, runs the target, overwrites the key argument register, and
+    continues. Use `edi` for amd64 and `w0` for arm64. Addresses are
+    architecture- and build-specific and must be recovered for the selected
+    binary; they are not discovered automatically. For PIE binaries, the
+    verifier resolves the runtime load base before setting the breakpoint.
+
+  All modes pass only when `ROOT INTEGRITY VERIFIED` appears in the captured
+  output. The default timeout is five seconds and can be changed with
+  `TIMEOUT_SECS`, while `GDB_BIN` selects an alternate debugger such as
+  `gdb-multiarch`:
+
+  ```bash
+  TIMEOUT_SECS=8 GDB_BIN=gdb-multiarch \
+    q2/verify.sh watchdog_agent_arm64 --script solve.gdb
+  ```
 
 For stripped binaries, `extract_key.py` accepts the manually recovered
 addresses with `--ptrace` and `--probe`; the corresponding default hash lengths
