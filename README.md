@@ -1,12 +1,12 @@
-### Challenge 2: Operation Watchdog
+# Challenge 2: Operation Watchdog
 
 **Title:** Operation Watchdog (Telemetry & Anti-Tamper Evasion)
 
 **Track:** Binary Reverse Engineering / Defensive Bypass
 
-**Difficulty:** Medium
+**Difficulty:** Hard
 
-**Estimated Time:** 35–45 minutes
+**Event duration:** 24 hours
 
 ---
 
