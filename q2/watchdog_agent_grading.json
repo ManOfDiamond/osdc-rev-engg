@@ -1,0 +1,103 @@
+{
+  "slug": "operation-watchdog",
+  "title": "Operation Watchdog (Telemetry & Anti-Tamper Evasion)",
+  "description": "SentinelCore Defense Systems has shipped an internal build of its next-generation endpoint monitoring agent, watchdog_agent (v3.2). The vendor claims the daemon is tamper-proof and immune to external instrumentation: active debuggers and unauthorized dynamic tracers are supposedly trapped and neutralized before any privileged routine can execute. You are given one stripped ELF binary per architecture (watchdog_agent_amd64, watchdog_agent_arm64), no source, no build scripts, no symbols. Your objective is to get the agent to print its privileged-state telemetry while the process is running directly inside an active debugger (GDB or equivalent dynamic instrumentation) -- a clean, un-instrumented run does not satisfy the objective. A successful run prints, in order: '[+] INTEGRITY CHECK PASSED: Host telemetry environment verified.', '[+] ROOT INTEGRITY VERIFIED: Privileged sensor daemon initialized.', '[*] Monitoring endpoint operations... (Press Ctrl+C to terminate)'. Submit a written report with (1) a root-cause analysis of the integrity/anti-instrumentation mechanism and why it does not stop a determined analyst, (2) a verified proof of concept (static patch with exact offsets/opcodes and the patched binary, OR an automated GDB script against the unmodified binary with the exact breakpoints/register or memory changes used), and (3) at least two concrete remediation recommendations.",
+
+  "max_attempts": 10,
+  "base_points": 1000,
+  "requires_flag": true,
+
+  "schema_version": 1,
+  "intended_writeup": "ROOT CAUSE: main() derives a 32-bit 'derived_key' at runtime by combining an FNV-1a32 checksum of the first 0x30 bytes of check_raw_ptrace() with an FNV-1a32 checksum of the first 0x30 bytes of probe_environment_signature() (mixed via multiply + rotate), then XOR/multiply-mixes in the results of two anti-debug probes -- a raw ptrace(PTRACE_TRACEME) syscall and a raw read of the TracerPid field from /proc/self/status, both issued via inline raw syscalls (not libc wrappers) specifically so LD_PRELOAD cannot hook them. The key seeds a SplitMix32-based keystream that XOR-decrypts a baked-in ciphertext; the result is accepted only if its CRC32 matches a stored constant. When untraced, both probe results are zero and the key resolves to a fixed, code-checksum-only value; under any tracer, the mixed-in 'taint' becomes nonzero, the key diverges, decryption produces garbage, the CRC check fails, and the binary prints an INTEGRITY FAULT and exits -- this is the control being bypassed. VULNERABLE CONTROL FLOW: detection is embedded in a DATA VALUE (the derived key), not a branch -- there is no single cmp/jnz gating privileged execution that can be flipped or NOP'd. The key is computed in main() and loaded into a single argument register (edi, x86_64 SysV ABI; w0, aarch64 AAPCS64) immediately before the call to enter_privileged_state(derived_key). EXPLOITATION MECHANISM: because (a) the 'clean' key is fully recoverable via pure static analysis -- read the real compiled bytes of the two checksummed functions directly from the stripped ELF's .text section and run the publicly-recoverable (via disassembly) FNV-1a32/rotate-multiply/SplitMix32/CRC32 algorithm offline, independent of any live, possibly-traced execution -- and (b) the correct key is nothing more than a register value at a deterministic point in the binary, an attacker can set a live breakpoint immediately before the enter_privileged_state call and overwrite the key register with the statically-computed correct value, bypassing detection while remaining traced the entire time. A static-patch bypass is equally valid: hardcode the correct key, or neutralize the taint-mixing instructions so the probe results are always folded to zero regardless of actual tracer state. REPRODUCTION (amd64): locate check_raw_ptrace (0x11c0) and probe_environment_signature (0x11d5) by raw instruction pattern matching (the ptrace syscall number 101/0x65 load preceding a bare `syscall`, and the XOR 0x9E3779B9 / ROL 5 / ADD 0x7F4A7C15 / XOR-shift-11 sequence, respectively); compute h1/h2 = FNV1a32 of 0x30 bytes at each; base = (h1*0x9E3779B1) XOR rotl32(h2,13); pre = rotl32(base,7)+0x01234567 (taint=0, clean case); key = probe_environment_signature(pre) XOR pre -- yields 0x137b0ed6 for this exact shipped build. The call site is at 0x14c4 with the key in %edi immediately prior. Because the binary is PIE, naive `break *0x14c4` before `run` can fail to auto-translate in some GDB/environment combinations ('Cannot access memory'); the robust method is `starti`, read the real load base from /proc/<pid>/maps, compute real_addr = base + 0x14c4, break there, continue, `set $edi = 0x137b0ed6`, continue. EXPECTED POSITIVE RESULT: the three-line success telemetry above, in order. EXPECTED NEGATIVE RESULT (reject): the unmodified binary run under a debugger with no override prints '[!] INTEGRITY FAULT: Telemetry state corruption / code tampering detected.' / '[-] Process terminated.' and exits 1 -- this is CORRECT unpatched behavior and must not be scored as a pass; likewise a bypass that only works when NOT traced (a 'clean run only' patch) does not satisfy the objective. DEMONSTRATED IMPACT: the vendor's claimed tamper-proof/anti-instrumentation guarantee is fully defeated with a single breakpoint and register write and zero on-disk modification required; privileged telemetry meant to be unreachable under live debugging is fully attainable. PRECONDITIONS: local execution/debugging access to the binary; no elevated host privileges required beyond running the process under a debugger. SCOPE LIMITATIONS: only the two supplied binaries are in scope; no other host or infrastructure attack is in scope; the bypass must be demonstrated specifically while traced. BUILD-SPECIFIC DIFFERENCES: amd64 and arm64 are separately compiled targets with different checksummed-region addresses, different derived_key values, and different key-argument registers (edi vs w0); addresses/keys are NOT interchangeable between the two binaries -- grade each submission against the architecture it actually targets, and organizer should independently re-verify the arm64 key/CRC chain with the same methodology before relying on it, since full arm64 tooling was unavailable during authoring. KNOWN DECOYS / INCORRECT EXPLANATIONS: (1) claiming LD_PRELOAD hooking of ptrace()/open()/read() defeats the checks -- false, these are raw inline syscalls specifically to defeat libc interposition, and the public README explicitly warns this is a dead end; (2) claiming the ciphertext yields to classic known-plaintext / repeating-single-byte-XOR brute force against a small keyspace -- false for the shipped build, which uses a 32-bit key, a SplitMix32 keystream, and a CRC32 (not plaintext-substring) check specifically to defeat this; (3) claiming a single conditional branch gates privileged execution and can be flipped/NOP'd -- false, there is no such branch, detection is pure data flow; (4) claiming ASLR/PIE must be cryptographically defeated -- false, it only requires standard runtime load-base translation (e.g. starti + /proc/pid/maps), not an exploit.",
+
+  "vulnerability": {
+    "title": "Runtime anti-debug/integrity key is recoverable via static analysis and overridable via live register write, allowing privileged-state execution while traced",
+    "vulnerability_class": "broken_access_control",
+    "component": "enter_privileged_state() key-derivation and consumption path in watchdog_agent (amd64/arm64)",
+    "severity": "medium"
+  },
+
+  "claims": [
+    {
+      "key": "root_cause",
+      "category": "root_cause",
+      "text": "The privileged-state unlock derives its decryption key at runtime from a checksum of the agent's own code combined with the results of a raw ptrace(PTRACE_TRACEME) syscall and a raw read of /proc/self/status's TracerPid field, rather than through a hardened, non-bypassable access-control path; because this key ends up as a plain, inspectable value in a CPU register immediately before it is consumed, an attacker who controls execution can simply overwrite it with the correct value before use.",
+      "contradiction_text": "The privileged-state unlock is protected by a control-flow integrity or access-control mechanism that cannot be bypassed by an attacker who has full control over process execution and register state.",
+      "weight": 30,
+      "required": true,
+      "support_method": "semantic_or_nli",
+      "exclusion": false,
+      "lexical_any": []
+    },
+    {
+      "key": "mechanism",
+      "category": "mechanism",
+      "text": "The anti-debugging checks are implemented as raw inline syscalls rather than libc wrapper calls specifically to defeat LD_PRELOAD-style hooking, but this only protects the detection calls themselves; it does nothing to protect the derived key once computed, so a debugger attached directly to the process can set a breakpoint right before the key is consumed and overwrite the register holding it, bypassing the check without ever touching the detection logic.",
+      "contradiction_text": "The anti-debugging checks cannot be bypassed by directly controlling CPU register state at the point the derived key is consumed, and the only way to defeat them is by hooking or patching the ptrace and file-read calls themselves.",
+      "weight": 25,
+      "required": false,
+      "support_method": "semantic_or_nli",
+      "exclusion": false,
+      "lexical_any": []
+    },
+    {
+      "key": "attack_path",
+      "category": "attack_path",
+      "text": "A successful bypass statically recovers the correct 'clean' key by reading the binary's actual compiled bytes for the checksummed code regions directly from the stripped ELF and computing the same checksum/keystream derivation offline, then, while running the unmodified binary under a live debugger, sets a breakpoint immediately before the call that consumes the derived key and overwrites the key register (or equivalently statically patches the binary) with the correct value, causing the integrity check to pass and the privileged telemetry to print even though the process is actively traced.",
+      "contradiction_text": "No breakpoint, register override, or binary patch targeting the key-consuming call site or the checksummed code regions is required or effective in reaching the privileged telemetry output while the process is traced.",
+      "weight": 25,
+      "required": false,
+      "support_method": "semantic_or_nli",
+      "exclusion": false,
+      "lexical_any": []
+    },
+    {
+      "key": "security_impact",
+      "category": "impact",
+      "text": "The bypass demonstrates that the agent's claimed tamper-proof, anti-instrumentation protection is fully defeatable, allowing the privileged telemetry/unlock state to be reached and observed while the binary is actively debugged, undermining the vendor's core integrity guarantee and the protection it was meant to provide against live analysis.",
+      "contradiction_text": "The agent's anti-debugging and integrity protections remain fully effective, and the privileged telemetry state cannot be reached or observed while the process is being actively debugged or instrumented.",
+      "weight": 20,
+      "required": true,
+      "support_method": "semantic_or_nli",
+      "exclusion": false,
+      "lexical_any": []
+    },
+    {
+      "key": "known_wrong_explanation",
+      "category": "exclusion",
+      "text": "The submission attributes the bypass to hooking or intercepting the ptrace() or file-read library calls (e.g. via LD_PRELOAD) to spoof a clean environment, or to statically brute-forcing/recovering a repeating single-byte XOR key from known plaintext, or to flipping/NOPing a single conditional branch that gates privileged execution, rather than to recovering and live-overriding the checksum-and-syscall-derived key.",
+      "contradiction_text": null,
+      "weight": 0,
+      "required": false,
+      "support_method": "nli_only",
+      "exclusion": true,
+      "lexical_any": [
+        "LD_PRELOAD",
+        "hooking ptrace",
+        "intercepting ptrace",
+        "single-byte XOR",
+        "brute force the key",
+        "NOP the jnz",
+        "flip the branch"
+      ]
+    }
+  ],
+
+  "requirement_groups": [
+    {
+      "key": "acceptable_mechanism",
+      "claims": [
+        "mechanism",
+        "attack_path"
+      ],
+      "minimum": 1,
+      "reject_on_contradiction": false,
+      "contradiction_override_entailment": 1.1
+    }
+  ],
+
+  "acceptance_threshold": 0.7,
+  "entailment_threshold": 0.7,
+  "contradiction_threshold": 0.8,
+  "similarity_threshold": 0.56
+}
