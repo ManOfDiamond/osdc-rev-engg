@@ -64,42 +64,7 @@ crash) is not a successful bypass.
 - Do not attempt to attack the host machine, other participants, or
   infrastructure outside the provided binary. Scope is limited to the
   supplied artifact.
-
-## 5. Deliverables
-
-Submit a short written report containing:
-
-1. **Root-cause analysis.** Identify the integrity and anti-instrumentation
-   mechanisms the binary implements, and explain, in your own words, backed
-   by what you found in the disassembly, why they do not stop a determined
-   analyst who controls execution.
-2. **Verified proof of concept.** Provide **one** of the following:
-   - **Static patch:** the exact file offsets or virtual addresses, original
-     bytes/opcodes, and replacement bytes/opcodes you changed, together with
-     the patched binary. The patched binary must reach the target telemetry
-     *while running under GDB with no further manual intervention*.
-   - **Dynamic/live bypass:** an automated GDB script (or equivalent
-     instrumentation script) that reproduces your bypass against the
-     **unmodified** binary we supplied, including the breakpoint
-     address(es), the register(s) or memory you change, and the value(s) you
-     set. We will replay it as given.
-3. **Remediation advice.** At least two concrete, specific changes the
-   engineering team could make to meaningfully raise the bar against the
-   class of bypass you used, not generic advice like "add more checks."
-
-## 6. Submission format
-
-Submit a single archive or document containing your written report (deliverables
-1–3 above) and any supporting artifacts (patched binary, GDB script, etc.)
-referenced in it. Make sure your PoC is runnable as submitted; we will
-execute it against the original binary (or your patched binary, for a static
-patch) exactly as provided.
-
-## 7. Scoring
-
-Submissions are graded on all three deliverables, not PoC success alone. A
-working bypass with a thin or incorrect root-cause explanation will score
-lower than a complete, accurate write-up. Partial credit is available for a
-correct root-cause analysis even without a fully working PoC.
+- Submit a single archive or document containing your written report and 
+  any supporting artifacts (patched binary, GDB script, etc.) referenced in it.
 
 Good luck.
